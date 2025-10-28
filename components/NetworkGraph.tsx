@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import cytoscape, { Core, NodeSingular } from 'cytoscape';
-import type { Paper } from '@/types/paper';
+import cytoscape, { Core, NodeSingular, EdgeSingular } from 'cytoscape';
+import type { Paper, NetworkEdge } from '@/types/paper';
 
 interface NetworkGraphProps {
   papers: Paper[];
-  edges: Array<{ source: string; target: string }>;
+  edges: NetworkEdge[];
   centerPaperId: string;
   onNodeClick?: (paper: Paper) => void;
 }
@@ -43,7 +43,9 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: Netw
           data: {
             id: `edge-${idx}`,
             source: edge.source,
-            target: edge.target
+            target: edge.target,
+            edgeType: edge.type,
+            similarity: edge.similarity
           }
         }))
       ],
@@ -87,19 +89,42 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: Netw
           selector: 'edge',
           style: {
             'width': 2,
-            'line-color': '#cbd5e1',
-            'target-arrow-color': '#cbd5e1',
+            'line-color': (ele: EdgeSingular) => {
+              const type = ele.data('edgeType');
+              if (type === 'citation') return '#10b981'; // Green for citations
+              if (type === 'reference') return '#6366f1'; // Indigo for references
+              if (type === 'similar') return '#f59e0b'; // Amber for similar papers
+              return '#cbd5e1';
+            },
+            'target-arrow-color': (ele: EdgeSingular) => {
+              const type = ele.data('edgeType');
+              if (type === 'citation') return '#10b981';
+              if (type === 'reference') return '#6366f1';
+              if (type === 'similar') return '#f59e0b';
+              return '#cbd5e1';
+            },
             'target-arrow-shape': 'triangle',
             'curve-style': 'bezier',
-            'arrow-scale': 1
+            'arrow-scale': 1,
+            'line-style': (ele: EdgeSingular) => {
+              const type = ele.data('edgeType');
+              return type === 'similar' ? 'dashed' : 'solid';
+            },
+            'line-dash-pattern': [6, 3]
           }
         },
         {
           selector: 'edge.highlighted',
           style: {
-            'line-color': '#3b82f6',
-            'target-arrow-color': '#3b82f6',
-            'width': 3
+            'width': 4,
+            'opacity': 1
+          }
+        },
+        {
+          selector: 'edge:selected',
+          style: {
+            'width': 4,
+            'opacity': 1
           }
         }
       ],
@@ -181,19 +206,35 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: Netw
       </div>
 
       {/* Legend */}
-      <div className="absolute bottom-4 left-4 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg">
-        <h3 className="text-sm font-semibold mb-2 text-gray-900 dark:text-white">범례</h3>
+      <div className="absolute bottom-4 left-4 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg max-w-xs">
+        <h3 className="text-sm font-semibold mb-3 text-gray-900 dark:text-white">범례</h3>
         <div className="flex flex-col gap-2 text-xs">
-          <div className="flex items-center gap-2">
+          <div className="font-medium text-gray-700 dark:text-gray-300 mb-1">노드</div>
+          <div className="flex items-center gap-2 ml-2">
             <div className="w-4 h-4 rounded-full bg-blue-500"></div>
             <span className="text-gray-700 dark:text-gray-300">중심 논문</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 ml-2">
             <div className="w-4 h-4 rounded-full bg-slate-500"></div>
             <span className="text-gray-700 dark:text-gray-300">연결된 논문</span>
           </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-gray-600 dark:text-gray-400">노드 크기 = 인용 수</span>
+
+          <div className="font-medium text-gray-700 dark:text-gray-300 mt-2 mb-1">엣지</div>
+          <div className="flex items-center gap-2 ml-2">
+            <div className="w-6 h-0.5 bg-emerald-500"></div>
+            <span className="text-gray-700 dark:text-gray-300">인용 (Citation)</span>
+          </div>
+          <div className="flex items-center gap-2 ml-2">
+            <div className="w-6 h-0.5 bg-indigo-500"></div>
+            <span className="text-gray-700 dark:text-gray-300">참조 (Reference)</span>
+          </div>
+          <div className="flex items-center gap-2 ml-2">
+            <div className="w-6 h-0.5 bg-amber-500 border-dashed border-t-2 border-amber-500"></div>
+            <span className="text-gray-700 dark:text-gray-300">유사 (Similar)</span>
+          </div>
+
+          <div className="text-gray-600 dark:text-gray-400 mt-2 ml-2">
+            노드 크기 = 인용 수
           </div>
         </div>
       </div>

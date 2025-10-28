@@ -74,3 +74,20 @@ export async function getReferences(paperId: string, limit: number = 20): Promis
     return [];
   }
 }
+
+export async function getRecommendations(paperId: string, limit: number = 20): Promise<Citation[]> {
+  try {
+    await delay(100); // Rate limiting
+    const response = await axios.get(`${API_BASE_URL}/recommendations/v1/papers/forpaper/${paperId}`, {
+      params: {
+        limit,
+        fields: 'paperId,title,authors,year,citationCount'
+      }
+    });
+
+    return response.data.recommendedPapers || [];
+  } catch (error) {
+    console.error('Error fetching recommendations:', error);
+    return [];
+  }
+}

@@ -1,21 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { SearchBar } from '@/components/SearchBar';
 import { NetworkGraph } from '@/components/NetworkGraph';
 import { PaperDetail } from '@/components/PaperDetail';
-import type { Paper } from '@/types/paper';
+import type { Paper, NetworkEdge } from '@/types/paper';
 
 interface NetworkData {
   papers: Paper[];
-  edges: Array<{ source: string; target: string }>;
+  edges: NetworkEdge[];
 }
 
 export default function Home() {
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
   const [centerPaperId, setCenterPaperId] = useState<string | null>(null);
   const [detailPaper, setDetailPaper] = useState<Paper | null>(null);
+  const [showCitations, setShowCitations] = useState(true);
+  const [showReferences, setShowReferences] = useState(true);
+  const [showSimilar, setShowSimilar] = useState(true);
 
   const { data: networkData, isLoading } = useQuery<NetworkData>({
     queryKey: ['network', centerPaperId],
@@ -27,6 +30,36 @@ export default function Home() {
     },
     enabled: !!centerPaperId,
   });
+
+  // Filter edges based on selected types
+  const filteredNetworkData = useMemo(() => {
+    if (!networkData) return null;
+
+    const filteredEdges = networkData.edges.filter(edge => {
+      if (edge.type === 'citation' && !showCitations) return false;
+      if (edge.type === 'reference' && !showReferences) return false;
+      if (edge.type === 'similar' && !showSimilar) return false;
+      return true;
+    });
+
+    // Get paper IDs that are connected via filtered edges
+    const connectedPaperIds = new Set<string>();
+    connectedPaperIds.add(centerPaperId!);
+    filteredEdges.forEach(edge => {
+      connectedPaperIds.add(edge.source);
+      connectedPaperIds.add(edge.target);
+    });
+
+    // Filter papers to only include connected ones
+    const filteredPapers = networkData.papers.filter(paper =>
+      connectedPaperIds.has(paper.paperId)
+    );
+
+    return {
+      papers: filteredPapers,
+      edges: filteredEdges
+    };
+  }, [networkData, showCitations, showReferences, showSimilar, centerPaperId]);
 
   const handlePaperSelect = (paper: Paper) => {
     setSelectedPaper(paper);
@@ -46,7 +79,7 @@ export default function Home() {
             Paper Network
           </h1>
           <p className="text-gray-600 dark:text-gray-300 text-lg">
-            논문 인용 네트워크를 시각화하고 탐색하세요
+            인용 관계와 유사도 기반으로 논문 네트워크를 시각화하고 탐색하세요
           </p>
         </div>
 
@@ -59,23 +92,67 @@ export default function Home() {
           </div>
         )}
 
-        {networkData && networkData.papers.length > 0 && !isLoading && (
-          <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 h-[600px]">
-              <NetworkGraph
-                papers={networkData.papers}
-                edges={networkData.edges}
-                centerPaperId={centerPaperId!}
-                onNodeClick={handleNodeClick}
-              />
+        {filteredNetworkData && filteredNetworkData.papers.length > 0 && !isLoading && (
+          <>
+            {/* Filter Controls */}
+            <div className="mt-6 flex justify-center gap-4 flex-wrap">
+              <label className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow cursor-pointer hover:shadow-md transition-shadow">
+                <input
+                  type="checkbox"
+                  checked={showCitations}
+                  onChange={(e) => setShowCitations(e.target.checked)}
+                  className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                />
+                <span className="w-4 h-0.5 bg-emerald-500"></span>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  인용 ({networkData?.edges.filter(e => e.type === 'citation').length || 0})
+                </span>
+              </label>
+
+              <label className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow cursor-pointer hover:shadow-md transition-shadow">
+                <input
+                  type="checkbox"
+                  checked={showReferences}
+                  onChange={(e) => setShowReferences(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                />
+                <span className="w-4 h-0.5 bg-indigo-500"></span>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  참조 ({networkData?.edges.filter(e => e.type === 'reference').length || 0})
+                </span>
+              </label>
+
+              <label className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow cursor-pointer hover:shadow-md transition-shadow">
+                <input
+                  type="checkbox"
+                  checked={showSimilar}
+                  onChange={(e) => setShowSimilar(e.target.checked)}
+                  className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500"
+                />
+                <span className="w-4 h-0.5 border-t-2 border-dashed border-amber-500"></span>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  유사 ({networkData?.edges.filter(e => e.type === 'similar').length || 0})
+                </span>
+              </label>
             </div>
-            <div className="lg:col-span-1 h-[600px]">
-              <PaperDetail
-                paper={detailPaper}
-                onClose={() => setDetailPaper(null)}
-              />
+
+            <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 h-[600px]">
+                <NetworkGraph
+                  papers={filteredNetworkData.papers}
+                  edges={filteredNetworkData.edges}
+                  centerPaperId={centerPaperId!}
+                  onNodeClick={handleNodeClick}
+                />
+              </div>
+              <div className="lg:col-span-1 h-[600px]">
+                <PaperDetail
+                  paper={detailPaper}
+                  onClose={() => setDetailPaper(null)}
+                />
+              </div>
             </div>
-          </div>
+          </>
         )}
 
         {!centerPaperId && !isLoading && (

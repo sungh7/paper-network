@@ -24,12 +24,18 @@ export interface Citation {
   citationCount: number;
 }
 
+export type EdgeType = 'citation' | 'reference' | 'similar';
+
+export interface NetworkEdge {
+  source: string;
+  target: string;
+  type: EdgeType;
+  similarity?: number; // For similar edges
+}
+
 export interface NetworkData {
   papers: Map<string, Paper>;
-  edges: Array<{
-    source: string;
-    target: string;
-  }>;
+  edges: NetworkEdge[];
 }
 
 export interface SearchResult {
