@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import cytoscape, { Core, NodeSingular, EdgeSingular } from 'cytoscape';
 import type { Paper, NetworkEdge } from '@/types/paper';
+import type { Community, CentralityScores } from '@/lib/networkAnalysis';
 
 export type LayoutType = 'force' | 'timeline';
 
@@ -14,6 +15,9 @@ interface NetworkGraphProps {
   onNodeDoubleClick?: (paper: Paper) => void;
   layout?: LayoutType;
   onExportImage?: () => void;
+  communities?: Community[];
+  centralityScores?: CentralityScores;
+  showCommunities?: boolean;
 }
 
 export interface NetworkGraphHandle {
@@ -21,10 +25,20 @@ export interface NetworkGraphHandle {
   exportJPG: () => void;
 }
 
-export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout = 'force', onExportImage }: NetworkGraphProps) {
+export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout = 'force', onExportImage, communities, centralityScores, showCommunities = false }: NetworkGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+
+  // Create community lookup map
+  const communityMap = new Map<string, string>();
+  if (showCommunities && communities) {
+    communities.forEach(community => {
+      community.papers.forEach(paperId => {
+        communityMap.set(paperId, community.color);
+      });
+    });
+  }
 
   const exportPNG = () => {
     if (!cyRef.current) return;
@@ -124,16 +138,44 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
         {
           selector: 'node',
           style: {
-            'background-color': (ele: NodeSingular) =>
-              ele.data('isCenter') ? '#3b82f6' : '#64748b',
+            'background-color': (ele: NodeSingular) => {
+              const paperId = ele.data('id');
+              if (ele.data('isCenter')) return '#3b82f6';
+              if (showCommunities && communityMap.has(paperId)) {
+                return communityMap.get(paperId) || '#64748b';
+              }
+              return '#64748b';
+            },
             'label': 'data(label)',
             'width': (ele: NodeSingular) => {
-              const citations = ele.data('citations') || 0;
-              return Math.max(30, Math.min(80, 30 + Math.log(citations + 1) * 10));
+              const paperId = ele.data('id');
+              let size = 30;
+
+              // Use centrality score if available
+              if (centralityScores && centralityScores[paperId] !== undefined) {
+                size = 30 + centralityScores[paperId] * 50;
+              } else {
+                // Fallback to citations
+                const citations = ele.data('citations') || 0;
+                size = 30 + Math.log(citations + 1) * 10;
+              }
+
+              return Math.max(30, Math.min(80, size));
             },
             'height': (ele: NodeSingular) => {
-              const citations = ele.data('citations') || 0;
-              return Math.max(30, Math.min(80, 30 + Math.log(citations + 1) * 10));
+              const paperId = ele.data('id');
+              let size = 30;
+
+              // Use centrality score if available
+              if (centralityScores && centralityScores[paperId] !== undefined) {
+                size = 30 + centralityScores[paperId] * 50;
+              } else {
+                // Fallback to citations
+                const citations = ele.data('citations') || 0;
+                size = 30 + Math.log(citations + 1) * 10;
+              }
+
+              return Math.max(30, Math.min(80, size));
             },
             'font-size': '10px',
             'text-valign': 'bottom',
@@ -264,7 +306,7 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
     return () => {
       cy.destroy();
     };
-  }, [papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout]);
+  }, [papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout, communities, centralityScores, showCommunities]);
 
   // Calculate year labels for timeline
   const yearLabels = layout === 'timeline' ? (() => {

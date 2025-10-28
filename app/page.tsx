@@ -6,7 +6,16 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { SearchBar } from '@/components/SearchBar';
 import { NetworkGraph, type LayoutType } from '@/components/NetworkGraph';
 import { PaperDetail } from '@/components/PaperDetail';
+import { NetworkStats } from '@/components/NetworkStats';
 import type { Paper, NetworkEdge } from '@/types/paper';
+import {
+  calculateNetworkStats,
+  calculateDegreeCentrality,
+  detectCommunities,
+  getTopPapers,
+  type Community,
+  type CentralityScores
+} from '@/lib/networkAnalysis';
 
 interface NetworkData {
   papers: Paper[];
@@ -23,6 +32,8 @@ function HomeContent() {
   const [showReferences, setShowReferences] = useState(true);
   const [showSimilar, setShowSimilar] = useState(true);
   const [layoutType, setLayoutType] = useState<LayoutType>('force');
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [showCommunities, setShowCommunities] = useState(false);
 
   // Load paper from URL on mount
   useEffect(() => {
@@ -72,6 +83,41 @@ function HomeContent() {
       edges: filteredEdges
     };
   }, [networkData, showCitations, showReferences, showSimilar, centerPaperId]);
+
+  // Calculate network analysis
+  const networkAnalysis = useMemo(() => {
+    if (!filteredNetworkData || filteredNetworkData.papers.length === 0) {
+      return null;
+    }
+
+    const stats = calculateNetworkStats(
+      filteredNetworkData.papers,
+      filteredNetworkData.edges
+    );
+
+    const centrality = calculateDegreeCentrality(
+      filteredNetworkData.papers,
+      filteredNetworkData.edges
+    );
+
+    const communities = detectCommunities(
+      filteredNetworkData.papers,
+      filteredNetworkData.edges
+    );
+
+    const topPapers = getTopPapers(
+      filteredNetworkData.papers,
+      centrality,
+      5
+    );
+
+    return {
+      stats,
+      centrality,
+      communities,
+      topPapers
+    };
+  }, [filteredNetworkData]);
 
   const handlePaperSelect = (paper: Paper) => {
     setSelectedPaper(paper);
@@ -194,6 +240,26 @@ function HomeContent() {
 
               <div className="w-px h-8 bg-gray-300 dark:bg-gray-600"></div>
 
+              <label className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow cursor-pointer hover:shadow-md transition-shadow">
+                <input
+                  type="checkbox"
+                  checked={showCommunities}
+                  onChange={(e) => setShowCommunities(e.target.checked)}
+                  className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                />
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  커뮤니티 색상
+                </span>
+              </label>
+
+              <button
+                onClick={() => setShowAnalysis(!showAnalysis)}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg shadow hover:shadow-md transition-all font-medium"
+                title="네트워크 분석"
+              >
+                📊 분석
+              </button>
+
               <button
                 onClick={handleShareUrl}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow hover:shadow-md transition-all font-medium"
@@ -212,13 +278,24 @@ function HomeContent() {
                   onNodeClick={handleNodeClick}
                   onNodeDoubleClick={handleNodeDoubleClick}
                   layout={layoutType}
+                  communities={networkAnalysis?.communities}
+                  centralityScores={networkAnalysis?.centrality}
+                  showCommunities={showCommunities}
                 />
               </div>
               <div className="lg:col-span-1 h-[600px]">
-                <PaperDetail
-                  paper={detailPaper}
-                  onClose={() => setDetailPaper(null)}
-                />
+                {showAnalysis && networkAnalysis ? (
+                  <NetworkStats
+                    stats={networkAnalysis.stats}
+                    topPapers={networkAnalysis.topPapers}
+                    onClose={() => setShowAnalysis(false)}
+                  />
+                ) : (
+                  <PaperDetail
+                    paper={detailPaper}
+                    onClose={() => setDetailPaper(null)}
+                  />
+                )}
               </div>
             </div>
           </>
