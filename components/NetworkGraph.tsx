@@ -4,23 +4,94 @@ import { useEffect, useRef, useState } from 'react';
 import cytoscape, { Core, NodeSingular, EdgeSingular } from 'cytoscape';
 import type { Paper, NetworkEdge } from '@/types/paper';
 
+export type LayoutType = 'force' | 'timeline';
+
 interface NetworkGraphProps {
   papers: Paper[];
   edges: NetworkEdge[];
   centerPaperId: string;
   onNodeClick?: (paper: Paper) => void;
+  onNodeDoubleClick?: (paper: Paper) => void;
+  layout?: LayoutType;
+  onExportImage?: () => void;
 }
 
-export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: NetworkGraphProps) {
+export interface NetworkGraphHandle {
+  exportPNG: () => void;
+  exportJPG: () => void;
+}
+
+export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout = 'force', onExportImage }: NetworkGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+
+  const exportPNG = () => {
+    if (!cyRef.current) return;
+    const png = cyRef.current.png({ full: true, scale: 2, bg: '#ffffff' });
+    const link = document.createElement('a');
+    link.href = png;
+    link.download = `paper-network-${Date.now()}.png`;
+    link.click();
+  };
+
+  const exportJPG = () => {
+    if (!cyRef.current) return;
+    const jpg = cyRef.current.jpg({ full: true, scale: 2, bg: '#ffffff' });
+    const link = document.createElement('a');
+    link.href = jpg;
+    link.download = `paper-network-${Date.now()}.jpg`;
+    link.click();
+  };
 
   useEffect(() => {
     if (!containerRef.current || papers.length === 0) return;
 
     // Create paper lookup map
     const paperMap = new Map(papers.map(p => [p.paperId, p]));
+
+    // Calculate timeline layout positions
+    const calculateTimelinePositions = () => {
+      const years = papers.map(p => p.year).filter(y => y);
+      const minYear = Math.min(...years);
+      const maxYear = Math.max(...years);
+      const yearRange = maxYear - minYear || 1;
+
+      // Group papers by year
+      const papersByYear = new Map<number, Paper[]>();
+      papers.forEach(paper => {
+        const year = paper.year || minYear;
+        if (!papersByYear.has(year)) {
+          papersByYear.set(year, []);
+        }
+        papersByYear.get(year)!.push(paper);
+      });
+
+      // Calculate positions
+      const positions: Record<string, { x: number; y: number }> = {};
+      const height = 600;
+      const width = 800;
+
+      papersByYear.forEach((yearPapers, year) => {
+        // Y position based on year (inverted so newer papers are at top)
+        const yearProgress = (maxYear - year) / yearRange;
+        const y = yearProgress * height * 0.8 + height * 0.1;
+
+        // X positions distributed horizontally for papers in same year
+        const xSpacing = Math.min(width / (yearPapers.length + 1), 150);
+        const totalWidth = xSpacing * yearPapers.length;
+        const startX = (width - totalWidth) / 2;
+
+        yearPapers.forEach((paper, index) => {
+          positions[paper.paperId] = {
+            x: startX + (index + 0.5) * xSpacing,
+            y: y
+          };
+        });
+      });
+
+      return positions;
+    };
 
     // Initialize Cytoscape
     const cy = cytoscape({
@@ -128,18 +199,27 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: Netw
           }
         }
       ],
-      layout: {
-        name: 'cose',
-        animate: true,
-        animationDuration: 1000,
-        nodeRepulsion: 8000,
-        idealEdgeLength: 100,
-        edgeElasticity: 100,
-        nestingFactor: 1.2,
-        gravity: 1,
-        numIter: 1000,
-        padding: 50
-      },
+      layout: layout === 'timeline'
+        ? {
+            name: 'preset',
+            positions: calculateTimelinePositions(),
+            fit: true,
+            padding: 50,
+            animate: true,
+            animationDuration: 500
+          }
+        : {
+            name: 'cose',
+            animate: true,
+            animationDuration: 1000,
+            nodeRepulsion: 8000,
+            idealEdgeLength: 100,
+            edgeElasticity: 100,
+            nestingFactor: 1.2,
+            gravity: 1,
+            numIter: 1000,
+            padding: 50
+          },
       minZoom: 0.3,
       maxZoom: 3,
       wheelSensitivity: 0.2
@@ -160,6 +240,16 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: Netw
       }
     });
 
+    // Double tap to expand network
+    cy.on('dbltap', 'node', (evt) => {
+      const node = evt.target;
+      const paper = node.data('paper');
+
+      if (onNodeDoubleClick && paper) {
+        onNodeDoubleClick(paper);
+      }
+    });
+
     // Tap on background to deselect
     cy.on('tap', (evt) => {
       if (evt.target === cy) {
@@ -174,11 +264,45 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: Netw
     return () => {
       cy.destroy();
     };
-  }, [papers, edges, centerPaperId, onNodeClick]);
+  }, [papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout]);
+
+  // Calculate year labels for timeline
+  const yearLabels = layout === 'timeline' ? (() => {
+    const years = papers.map(p => p.year).filter(y => y);
+    if (years.length === 0) return [];
+    const minYear = Math.min(...years);
+    const maxYear = Math.max(...years);
+    const yearRange = maxYear - minYear || 1;
+
+    // Show 5-6 year markers
+    const step = Math.max(1, Math.ceil(yearRange / 5));
+    const labels = [];
+    for (let year = minYear; year <= maxYear; year += step) {
+      labels.push(year);
+    }
+    if (!labels.includes(maxYear)) {
+      labels.push(maxYear);
+    }
+    return labels;
+  })() : [];
 
   return (
     <div className="relative w-full h-full bg-gray-50 dark:bg-gray-900 rounded-lg overflow-hidden">
       <div ref={containerRef} className="w-full h-full" />
+
+      {/* Timeline year axis */}
+      {layout === 'timeline' && yearLabels.length > 0 && (
+        <div className="absolute left-2 top-0 bottom-0 flex flex-col justify-between py-16 pointer-events-none">
+          {yearLabels.reverse().map(year => (
+            <div key={year} className="flex items-center">
+              <div className="bg-white dark:bg-gray-800 px-2 py-1 rounded text-xs font-medium text-gray-700 dark:text-gray-300 shadow">
+                {year}
+              </div>
+              <div className="w-2 h-px bg-gray-300 dark:bg-gray-600 ml-1"></div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Controls */}
       <div className="absolute top-4 right-4 flex flex-col gap-2">
@@ -187,7 +311,7 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: Netw
           className="px-3 py-2 bg-white dark:bg-gray-800 rounded shadow-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-sm font-medium"
           title="전체 보기"
         >
-          전체 보기
+          🔍 전체
         </button>
         <button
           onClick={() => cyRef.current?.zoom(cyRef.current.zoom() * 1.2)}
@@ -202,6 +326,21 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick }: Netw
           title="축소"
         >
           -
+        </button>
+        <div className="h-px bg-gray-300 dark:bg-gray-600 my-1"></div>
+        <button
+          onClick={exportPNG}
+          className="px-3 py-2 bg-white dark:bg-gray-800 rounded shadow-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-sm font-medium"
+          title="PNG로 내보내기"
+        >
+          📷 PNG
+        </button>
+        <button
+          onClick={exportJPG}
+          className="px-3 py-2 bg-white dark:bg-gray-800 rounded shadow-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-sm font-medium"
+          title="JPG로 내보내기"
+        >
+          🖼️ JPG
         </button>
       </div>
 

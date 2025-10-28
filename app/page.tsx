@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { SearchBar } from '@/components/SearchBar';
-import { NetworkGraph } from '@/components/NetworkGraph';
+import { NetworkGraph, type LayoutType } from '@/components/NetworkGraph';
 import { PaperDetail } from '@/components/PaperDetail';
 import type { Paper, NetworkEdge } from '@/types/paper';
 
@@ -12,13 +13,24 @@ interface NetworkData {
   edges: NetworkEdge[];
 }
 
-export default function Home() {
+function HomeContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
   const [centerPaperId, setCenterPaperId] = useState<string | null>(null);
   const [detailPaper, setDetailPaper] = useState<Paper | null>(null);
   const [showCitations, setShowCitations] = useState(true);
   const [showReferences, setShowReferences] = useState(true);
   const [showSimilar, setShowSimilar] = useState(true);
+  const [layoutType, setLayoutType] = useState<LayoutType>('force');
+
+  // Load paper from URL on mount
+  useEffect(() => {
+    const paperId = searchParams.get('paper');
+    if (paperId && !centerPaperId) {
+      setCenterPaperId(paperId);
+    }
+  }, [searchParams, centerPaperId]);
 
   const { data: networkData, isLoading } = useQuery<NetworkData>({
     queryKey: ['network', centerPaperId],
@@ -65,10 +77,29 @@ export default function Home() {
     setSelectedPaper(paper);
     setCenterPaperId(paper.paperId);
     setDetailPaper(paper);
+    // Update URL
+    router.push(`?paper=${paper.paperId}`, { scroll: false });
   };
 
   const handleNodeClick = (paper: Paper) => {
     setDetailPaper(paper);
+  };
+
+  const handleNodeDoubleClick = (paper: Paper) => {
+    // Expand network around the double-clicked paper
+    setCenterPaperId(paper.paperId);
+    setSelectedPaper(paper);
+    setDetailPaper(paper);
+    // Update URL
+    router.push(`?paper=${paper.paperId}`, { scroll: false });
+  };
+
+  const handleShareUrl = () => {
+    if (!centerPaperId) return;
+    const url = `${window.location.origin}?paper=${centerPaperId}`;
+    navigator.clipboard.writeText(url).then(() => {
+      alert('URL이 클립보드에 복사되었습니다!');
+    });
   };
 
   return (
@@ -95,7 +126,33 @@ export default function Home() {
         {filteredNetworkData && filteredNetworkData.papers.length > 0 && !isLoading && (
           <>
             {/* Filter Controls */}
-            <div className="mt-6 flex justify-center gap-4 flex-wrap">
+            <div className="mt-6 flex justify-center gap-4 flex-wrap items-center">
+              {/* Layout Toggle */}
+              <div className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 mr-2">레이아웃:</span>
+                <button
+                  onClick={() => setLayoutType('force')}
+                  className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                    layoutType === 'force'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  네트워크
+                </button>
+                <button
+                  onClick={() => setLayoutType('timeline')}
+                  className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                    layoutType === 'timeline'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                >
+                  타임라인
+                </button>
+              </div>
+
+              <div className="w-px h-8 bg-gray-300 dark:bg-gray-600"></div>
               <label className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow cursor-pointer hover:shadow-md transition-shadow">
                 <input
                   type="checkbox"
@@ -134,6 +191,16 @@ export default function Home() {
                   유사 ({networkData?.edges.filter(e => e.type === 'similar').length || 0})
                 </span>
               </label>
+
+              <div className="w-px h-8 bg-gray-300 dark:bg-gray-600"></div>
+
+              <button
+                onClick={handleShareUrl}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow hover:shadow-md transition-all font-medium"
+                title="URL 공유"
+              >
+                🔗 공유
+              </button>
             </div>
 
             <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -143,6 +210,8 @@ export default function Home() {
                   edges={filteredNetworkData.edges}
                   centerPaperId={centerPaperId!}
                   onNodeClick={handleNodeClick}
+                  onNodeDoubleClick={handleNodeDoubleClick}
+                  layout={layoutType}
                 />
               </div>
               <div className="lg:col-span-1 h-[600px]">
@@ -179,5 +248,20 @@ export default function Home() {
         <p>Powered by Semantic Scholar API • Built with Next.js & Cytoscape.js</p>
       </footer>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <p className="mt-4 text-gray-600 dark:text-gray-400">로딩 중...</p>
+        </div>
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
   );
 }
