@@ -10,6 +10,11 @@ interface PaperDetailProps {
 export function PaperDetail({ paper, onClose }: PaperDetailProps) {
   if (!paper) return null;
 
+  const formattedPublicationDate = paper.publicationDate
+    ? new Date(paper.publicationDate).toLocaleDateString()
+    : undefined;
+  const openAccessUrl = paper.openAccessPdf?.url;
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 overflow-y-auto">
       <div className="flex justify-between items-start mb-4">
@@ -42,6 +47,14 @@ export function PaperDetail({ paper, onClose }: PaperDetailProps) {
             </h3>
             <p className="text-gray-600 dark:text-gray-400">{paper.year}</p>
           </div>
+          {formattedPublicationDate && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                출판일
+              </h3>
+              <p className="text-gray-600 dark:text-gray-400">{formattedPublicationDate}</p>
+            </div>
+          )}
           {paper.venue && (
             <div>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
@@ -87,6 +100,19 @@ export function PaperDetail({ paper, onClose }: PaperDetailProps) {
               className="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
             >
               Semantic Scholar에서 보기 →
+            </a>
+          </div>
+        )}
+
+        {openAccessUrl && (
+          <div>
+            <a
+              href={openAccessUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
+            >
+              Open Access PDF 열기 →
             </a>
           </div>
         )}

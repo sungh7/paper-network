@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, Suspense } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { SearchBar } from '@/components/SearchBar';
@@ -11,7 +11,9 @@ import type { Paper, NetworkEdge } from '@/types/paper';
 import {
   calculateNetworkStats,
   calculateDegreeCentrality,
+  calculateBetweennessCentrality,
   detectCommunities,
+  findShortestPath,
   getTopPapers,
   type Community,
   type CentralityScores
@@ -34,24 +36,115 @@ function HomeContent() {
   const [layoutType, setLayoutType] = useState<LayoutType>('force');
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
+  const [highlightPath, setHighlightPath] = useState<string[] | null>(null);
+  const isApplyingParams = useRef(false);
+  const lastSerializedParams = useRef('');
 
   // Load paper from URL on mount
   useEffect(() => {
+    isApplyingParams.current = true;
+
     const paperId = searchParams.get('paper');
-    if (paperId && !centerPaperId) {
+    if (paperId && paperId !== centerPaperId) {
       setCenterPaperId(paperId);
     }
-  }, [searchParams, centerPaperId]);
+    if (!paperId && centerPaperId) {
+      setCenterPaperId(null);
+    }
+
+    const layoutParam = searchParams.get('layout') === 'timeline' ? 'timeline' : 'force';
+    if (layoutParam !== layoutType) {
+      setLayoutType(layoutParam);
+    }
+
+    const citationsParam = searchParams.get('citations');
+    const referencesParam = searchParams.get('references');
+    const similarParam = searchParams.get('similar');
+    const communitiesParam = searchParams.get('communities');
+    const analysisParam = searchParams.get('analysis');
+
+    const nextShowCitations = citationsParam !== '0';
+    if (nextShowCitations !== showCitations) {
+      setShowCitations(nextShowCitations);
+    }
+
+    const nextShowReferences = referencesParam !== '0';
+    if (nextShowReferences !== showReferences) {
+      setShowReferences(nextShowReferences);
+    }
+
+    const nextShowSimilar = similarParam !== '0';
+    if (nextShowSimilar !== showSimilar) {
+      setShowSimilar(nextShowSimilar);
+    }
+
+    const nextShowCommunities = communitiesParam === '1';
+    if (nextShowCommunities !== showCommunities) {
+      setShowCommunities(nextShowCommunities);
+    }
+
+    const nextShowAnalysis = analysisParam === '1';
+    if (nextShowAnalysis !== showAnalysis) {
+      setShowAnalysis(nextShowAnalysis);
+    }
+
+    lastSerializedParams.current = searchParams.toString();
+    isApplyingParams.current = false;
+  }, [searchParams, centerPaperId, layoutType, showCitations, showReferences, showSimilar, showCommunities, showAnalysis]);
+
+  useEffect(() => {
+    if (isApplyingParams.current) return;
+
+    const params = new URLSearchParams();
+    if (centerPaperId) {
+      params.set('paper', centerPaperId);
+    }
+    if (layoutType !== 'force') {
+      params.set('layout', layoutType);
+    }
+    if (!showCitations) {
+      params.set('citations', '0');
+    }
+    if (!showReferences) {
+      params.set('references', '0');
+    }
+    if (!showSimilar) {
+      params.set('similar', '0');
+    }
+    if (showCommunities) {
+      params.set('communities', '1');
+    }
+    if (showAnalysis) {
+      params.set('analysis', '1');
+    }
+
+    const serialized = params.toString();
+    if (serialized !== lastSerializedParams.current) {
+      lastSerializedParams.current = serialized;
+      const search = serialized ? `?${serialized}` : '?';
+      if (search !== `?${searchParams.toString()}`) {
+        router.replace(search, { scroll: false });
+      }
+    }
+  }, [centerPaperId, layoutType, showCitations, showReferences, showSimilar, showCommunities, showAnalysis, router, searchParams]);
 
   const { data: networkData, isLoading } = useQuery<NetworkData>({
-    queryKey: ['network', centerPaperId],
+    queryKey: ['network', centerPaperId, showSimilar],
     queryFn: async () => {
       if (!centerPaperId) return { papers: [], edges: [] };
-      const response = await fetch(`/api/network/${centerPaperId}`);
+      const params = new URLSearchParams();
+      if (!showSimilar) {
+        params.set('includeSimilar', 'false');
+      }
+      const suffix = params.toString();
+      const response = await fetch(`/api/network/${centerPaperId}${suffix ? `?${suffix}` : ''}`);
       if (!response.ok) throw new Error('Failed to fetch network');
       return response.json();
     },
     enabled: !!centerPaperId,
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 10,
+    retry: 1,
   });
 
   // Filter edges based on selected types
@@ -100,6 +193,11 @@ function HomeContent() {
       filteredNetworkData.edges
     );
 
+    const betweenness = calculateBetweennessCentrality(
+      filteredNetworkData.papers,
+      filteredNetworkData.edges
+    );
+
     const communities = detectCommunities(
       filteredNetworkData.papers,
       filteredNetworkData.edges
@@ -111,11 +209,19 @@ function HomeContent() {
       5
     );
 
+    const topBetweenness = getTopPapers(
+      filteredNetworkData.papers,
+      betweenness,
+      5
+    );
+
     return {
       stats,
       centrality,
+      betweenness,
       communities,
-      topPapers
+      topPapers,
+      topBetweenness
     };
   }, [filteredNetworkData]);
 
@@ -123,8 +229,7 @@ function HomeContent() {
     setSelectedPaper(paper);
     setCenterPaperId(paper.paperId);
     setDetailPaper(paper);
-    // Update URL
-    router.push(`?paper=${paper.paperId}`, { scroll: false });
+    setHighlightPath(null);
   };
 
   const handleNodeClick = (paper: Paper) => {
@@ -136,17 +241,23 @@ function HomeContent() {
     setCenterPaperId(paper.paperId);
     setSelectedPaper(paper);
     setDetailPaper(paper);
-    // Update URL
-    router.push(`?paper=${paper.paperId}`, { scroll: false });
+    setHighlightPath(null);
   };
 
   const handleShareUrl = () => {
-    if (!centerPaperId) return;
-    const url = `${window.location.origin}?paper=${centerPaperId}`;
+    const url = window.location.href;
     navigator.clipboard.writeText(url).then(() => {
       alert('URL이 클립보드에 복사되었습니다!');
     });
   };
+
+  const handleHighlightPath = useCallback((path: string[] | null) => {
+    setHighlightPath(path);
+  }, []);
+
+  useEffect(() => {
+    setHighlightPath(null);
+  }, [centerPaperId, showCitations, showReferences, showSimilar]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
@@ -281,6 +392,7 @@ function HomeContent() {
                   communities={networkAnalysis?.communities}
                   centralityScores={networkAnalysis?.centrality}
                   showCommunities={showCommunities}
+                  highlightPath={highlightPath ?? undefined}
                 />
               </div>
               <div className="lg:col-span-1 h-[600px]">
@@ -288,6 +400,13 @@ function HomeContent() {
                   <NetworkStats
                     stats={networkAnalysis.stats}
                     topPapers={networkAnalysis.topPapers}
+                    betweennessTop={networkAnalysis.topBetweenness}
+                    centrality={networkAnalysis.centrality}
+                    betweenness={networkAnalysis.betweenness}
+                    communities={networkAnalysis.communities}
+                    papers={filteredNetworkData.papers}
+                    edges={filteredNetworkData.edges}
+                    onHighlightPath={handleHighlightPath}
                     onClose={() => setShowAnalysis(false)}
                   />
                 ) : (
