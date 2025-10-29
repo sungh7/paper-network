@@ -9,6 +9,7 @@ export interface Paper {
   url?: string;
   venue?: string;
   publicationDate?: string;
+  openAccessPdf?: OpenAccessPdf | null;
 }
 
 export interface Author {
@@ -34,11 +35,16 @@ export interface NetworkEdge {
 }
 
 export interface NetworkData {
-  papers: Map<string, Paper>;
+  papers: Paper[];
   edges: NetworkEdge[];
 }
 
 export interface SearchResult {
   total: number;
   data: Paper[];
+}
+
+export interface OpenAccessPdf {
+  url?: string;
+  status?: string;
 }

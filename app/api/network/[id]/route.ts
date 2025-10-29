@@ -1,6 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPaperDetails, getCitations, getReferences, getRecommendations } from '@/lib/semanticScholar';
-import type { NetworkEdge } from '@/types/paper';
+import type { NetworkEdge, Paper } from '@/types/paper';
+
+interface CacheEntry {
+  value: {
+    papers: Paper[];
+    edges: NetworkEdge[];
+  };
+  expiresAt: number;
+}
+
+type NetworkCache = Map<string, CacheEntry>;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __networkCache: NetworkCache | undefined;
+}
+
+const networkCache: NetworkCache = globalThis.__networkCache ?? new Map();
+if (!globalThis.__networkCache) {
+  globalThis.__networkCache = networkCache;
+}
+
+const NETWORK_CACHE_TTL = 1000 * 60 * 5; // 5 minutes
 
 export async function GET(
   request: NextRequest,
@@ -18,6 +40,15 @@ export async function GET(
       );
     }
 
+    const cacheKey = `${id}:${includeSimilar ? 'similar' : 'core'}`;
+    const cached = networkCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return NextResponse.json(cached.value);
+    }
+    if (cached && cached.expiresAt <= Date.now()) {
+      networkCache.delete(cacheKey);
+    }
+
     // Fetch main paper, citations, references, and similar papers in parallel
     const [mainPaper, citations, references, recommendations] = await Promise.all([
       getPaperDetails(id),
@@ -27,7 +58,7 @@ export async function GET(
     ]);
 
     // Build network data
-    const papers = new Map();
+    const papers = new Map<string, Paper>();
     papers.set(mainPaper.paperId, mainPaper);
 
     const edges: NetworkEdge[] = [];
@@ -79,10 +110,17 @@ export async function GET(
       });
     }
 
-    return NextResponse.json({
+    const payload = {
       papers: Array.from(papers.values()),
       edges
+    };
+
+    networkCache.set(cacheKey, {
+      value: payload,
+      expiresAt: Date.now() + NETWORK_CACHE_TTL
     });
+
+    return NextResponse.json(payload);
   } catch (error) {
     console.error('Network API error:', error);
     return NextResponse.json(

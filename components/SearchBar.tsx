@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Paper, SearchResult } from '@/types/paper';
+import { useDebouncedValue } from '@/lib/hooks/useDebouncedValue';
 
 interface SearchBarProps {
   onPaperSelect: (paper: Paper) => void;
@@ -10,25 +11,49 @@ interface SearchBarProps {
 
 export function SearchBar({ onPaperSelect }: SearchBarProps) {
   const [query, setQuery] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const debouncedQuery = useDebouncedValue(query.trim(), 350);
+  const queryClient = useQueryClient();
 
-  const { data, isLoading, error } = useQuery<SearchResult>({
-    queryKey: ['search', searchTerm],
+  const { data, isFetching, error, refetch } = useQuery<SearchResult>({
+    queryKey: ['search', debouncedQuery],
     queryFn: async () => {
-      if (!searchTerm) return { total: 0, data: [] };
-      const response = await fetch(`/api/search?query=${encodeURIComponent(searchTerm)}&limit=10`);
-      if (!response.ok) throw new Error('Search failed');
+      if (!debouncedQuery) {
+        return { total: 0, data: [] };
+      }
+      const response = await fetch(`/api/search?query=${encodeURIComponent(debouncedQuery)}&limit=10`);
+      if (!response.ok) {
+        throw new Error('Search failed');
+      }
       return response.json();
     },
-    enabled: searchTerm.length > 0,
+    enabled: debouncedQuery.length > 0,
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 10,
+    retry: 1,
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (query.trim()) {
-      setSearchTerm(query.trim());
+    if (!query.trim()) return;
+    setHasSubmitted(true);
+    if (debouncedQuery !== query.trim()) {
+      queryClient.setQueryData(['search', query.trim()], data ?? { total: 0, data: [] });
     }
+    refetch();
   };
+
+  const suggestionLabel = useMemo(() => {
+    if (!debouncedQuery) return '검색어를 입력하면 제안이 표시됩니다.';
+    if (isFetching && !data) return '검색 중...';
+    if (data && data.total > 0) {
+      return `${data.total}개의 결과 중 상위 ${data.data.length}개`;
+    }
+    if (hasSubmitted && data && data.data.length === 0) {
+      return '검색 결과가 없습니다. 다른 키워드를 시도해보세요.';
+    }
+    return '검색 결과를 불러오는 중...';
+  }, [debouncedQuery, isFetching, data, hasSubmitted]);
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -37,16 +62,20 @@ export function SearchBar({ onPaperSelect }: SearchBarProps) {
           <input
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setHasSubmitted(false);
+            }}
             placeholder="논문 제목이나 키워드를 입력하세요..."
             className="flex-1 px-4 py-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="논문 검색"
           />
           <button
             type="submit"
-            disabled={isLoading || !query.trim()}
+            disabled={isFetching || !query.trim()}
             className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium rounded-lg transition-colors"
           >
-            {isLoading ? '검색 중...' : '검색'}
+            {isFetching ? '검색 중...' : '검색'}
           </button>
         </div>
       </form>
@@ -61,7 +90,7 @@ export function SearchBar({ onPaperSelect }: SearchBarProps) {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
           <div className="p-4 bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
             <p className="text-sm text-gray-600 dark:text-gray-300">
-              {data.total}개의 결과 중 {data.data.length}개 표시
+              {suggestionLabel}
             </p>
           </div>
           <div className="max-h-96 overflow-y-auto">
@@ -77,7 +106,7 @@ export function SearchBar({ onPaperSelect }: SearchBarProps) {
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
                   {paper.authors.map(a => a.name).join(', ')} • {paper.year}
                 </p>
-                <div className="flex gap-4 text-xs text-gray-500 dark:text-gray-400">
+                <div className="flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
                   <span>인용: {paper.citationCount}</span>
                   <span>참고문헌: {paper.referenceCount}</span>
                   {paper.venue && <span>{paper.venue}</span>}
@@ -88,9 +117,9 @@ export function SearchBar({ onPaperSelect }: SearchBarProps) {
         </div>
       )}
 
-      {data && data.data.length === 0 && searchTerm && !isLoading && (
+      {data && data.data.length === 0 && debouncedQuery && !isFetching && (
         <div className="text-center p-8 text-gray-500 dark:text-gray-400">
-          검색 결과가 없습니다.
+          검색 결과가 없습니다. 다른 키워드를 입력해보세요.
         </div>
       )}
     </div>
