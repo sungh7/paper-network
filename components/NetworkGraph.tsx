@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import cytoscape, { Core, NodeSingular, EdgeSingular } from 'cytoscape';
 import type { Paper, NetworkEdge } from '@/types/paper';
 import type { Community, CentralityScores } from '@/lib/networkAnalysis';
@@ -19,6 +19,8 @@ interface NetworkGraphProps {
   centralityScores?: CentralityScores;
   showCommunities?: boolean;
   highlightPath?: string[];
+  highlightNodes?: string[];
+  focusPaperId?: string;
 }
 
 export interface NetworkGraphHandle {
@@ -26,10 +28,9 @@ export interface NetworkGraphHandle {
   exportJPG: () => void;
 }
 
-export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout = 'force', onExportImage, communities, centralityScores, showCommunities = false, highlightPath }: NetworkGraphProps) {
+export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout = 'force', onExportImage, communities, centralityScores, showCommunities = false, highlightPath, highlightNodes, focusPaperId }: NetworkGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
   // Create community lookup map
   const communityMap = useMemo(() => {
@@ -295,8 +296,6 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
     cy.on('tap', 'node', (evt) => {
       const node = evt.target;
       const paper = node.data('paper');
-      setSelectedNode(node.id());
-
       // Highlight connected edges
       cy.elements().removeClass('highlighted');
       node.connectedEdges().addClass('highlighted');
@@ -319,7 +318,6 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
     // Tap on background to deselect
     cy.on('tap', (evt) => {
       if (evt.target === cy) {
-        setSelectedNode(null);
         cy.elements().removeClass('highlighted');
       }
     });
@@ -338,43 +336,84 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
     cyRef.current.nodes().removeClass('path-highlight');
     cyRef.current.edges().removeClass('path-highlight');
 
-    if (!highlightPath || highlightPath.length === 0) {
+    const nodesToHighlight = highlightNodes ?? highlightPath ?? [];
+    if (!nodesToHighlight || nodesToHighlight.length === 0) {
       return;
     }
 
-    highlightPath.forEach((nodeId) => {
-      cyRef.current?.getElementById(nodeId).addClass('path-highlight');
+    const highlightSet = new Set(nodesToHighlight);
+
+    nodesToHighlight.forEach((nodeId) => {
+      const node = cyRef.current?.getElementById(nodeId);
+      if (node && node.length > 0) {
+        node.addClass('path-highlight');
+      }
     });
 
-    for (let i = 0; i < highlightPath.length - 1; i++) {
-      const source = highlightPath[i];
-      const target = highlightPath[i + 1];
-      const edgesBetween = cyRef.current
-        .edges()
-        .filter(edge => {
-          const edgeSource = edge.data('source');
-          const edgeTarget = edge.data('target');
-          return (
-            (edgeSource === source && edgeTarget === target) ||
-            (edgeSource === target && edgeTarget === source)
-          );
-        });
+    if (highlightPath && highlightPath.length > 1) {
+      for (let i = 0; i < highlightPath.length - 1; i++) {
+        const source = highlightPath[i];
+        const target = highlightPath[i + 1];
+        const edgesBetween = cyRef.current
+          .edges()
+          .filter(edge => {
+            const edgeSource = edge.data('source');
+            const edgeTarget = edge.data('target');
+            return (
+              (edgeSource === source && edgeTarget === target) ||
+              (edgeSource === target && edgeTarget === source)
+            );
+          });
 
-      edgesBetween.forEach(edge => edge.addClass('path-highlight'));
+        edgesBetween.forEach(edge => edge.addClass('path-highlight'));
+      }
+    } else {
+      cyRef.current.edges().forEach(edge => {
+        const edgeSource = edge.data('source');
+        const edgeTarget = edge.data('target');
+        if (highlightSet.has(edgeSource) && highlightSet.has(edgeTarget)) {
+          edge.addClass('path-highlight');
+        }
+      });
     }
 
-    if (highlightPath.length > 0) {
+    const highlightedCollections = nodesToHighlight
+      .map(id => cyRef.current!.getElementById(id))
+      .filter(ele => ele && ele.length > 0);
+
+    if (highlightedCollections.length > 0) {
+      const elements = cyRef.current.collection(highlightedCollections);
       cyRef.current.animate({
         fit: {
-          eles: cyRef.current.collection(
-            highlightPath.map(id => cyRef.current!.getElementById(id))
-          ),
+          eles: elements,
           padding: 80
         },
         duration: 400
       });
     }
-  }, [highlightPath, edges]);
+  }, [highlightPath, highlightNodes, edges]);
+
+  useEffect(() => {
+    if (!cyRef.current) return;
+
+    cyRef.current.nodes().unselect();
+
+    if (!focusPaperId) {
+      return;
+    }
+
+    const node = cyRef.current.getElementById(focusPaperId);
+    if (node && node.length > 0) {
+      node.select();
+      cyRef.current.animate({
+        fit: {
+          eles: node,
+          padding: 100
+        },
+        duration: 400
+      });
+    }
+  }, [focusPaperId]);
 
   // Calculate year labels for timeline
   const yearLabels = layout === 'timeline' ? (() => {
