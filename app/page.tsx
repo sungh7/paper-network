@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, Suspense } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { SearchBar } from '@/components/SearchBar';
@@ -11,7 +11,9 @@ import type { Paper, NetworkEdge } from '@/types/paper';
 import {
   calculateNetworkStats,
   calculateDegreeCentrality,
+  calculateBetweennessCentrality,
   detectCommunities,
+  findShortestPath,
   getTopPapers,
   type Community,
   type CentralityScores
@@ -20,6 +22,12 @@ import {
 interface NetworkData {
   papers: Paper[];
   edges: NetworkEdge[];
+}
+
+interface FilteredNetworkData extends NetworkData {
+  hiddenPaperCount: number;
+  hiddenEdgeCount: number;
+  effectiveTimelineYear: number | null;
 }
 
 function HomeContent() {
@@ -34,29 +42,139 @@ function HomeContent() {
   const [layoutType, setLayoutType] = useState<LayoutType>('force');
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
+  const [highlightPath, setHighlightPath] = useState<string[] | null>(null);
+  const [highlightNodes, setHighlightNodes] = useState<string[] | null>(null);
+  const [focusPaperId, setFocusPaperId] = useState<string | null>(null);
+  const [timelineYear, setTimelineYear] = useState<number | null>(null);
+  const [isTimelinePlaying, setIsTimelinePlaying] = useState(false);
+  const isApplyingParams = useRef(false);
+  const lastSerializedParams = useRef('');
 
   // Load paper from URL on mount
   useEffect(() => {
+    isApplyingParams.current = true;
+
     const paperId = searchParams.get('paper');
-    if (paperId && !centerPaperId) {
+    if (paperId && paperId !== centerPaperId) {
       setCenterPaperId(paperId);
     }
-  }, [searchParams, centerPaperId]);
+    if (!paperId && centerPaperId) {
+      setCenterPaperId(null);
+    }
+
+    const layoutParam = searchParams.get('layout') === 'timeline' ? 'timeline' : 'force';
+    if (layoutParam !== layoutType) {
+      setLayoutType(layoutParam);
+    }
+
+    const citationsParam = searchParams.get('citations');
+    const referencesParam = searchParams.get('references');
+    const similarParam = searchParams.get('similar');
+    const communitiesParam = searchParams.get('communities');
+    const analysisParam = searchParams.get('analysis');
+
+    const nextShowCitations = citationsParam !== '0';
+    if (nextShowCitations !== showCitations) {
+      setShowCitations(nextShowCitations);
+    }
+
+    const nextShowReferences = referencesParam !== '0';
+    if (nextShowReferences !== showReferences) {
+      setShowReferences(nextShowReferences);
+    }
+
+    const nextShowSimilar = similarParam !== '0';
+    if (nextShowSimilar !== showSimilar) {
+      setShowSimilar(nextShowSimilar);
+    }
+
+    const nextShowCommunities = communitiesParam === '1';
+    if (nextShowCommunities !== showCommunities) {
+      setShowCommunities(nextShowCommunities);
+    }
+
+    const nextShowAnalysis = analysisParam === '1';
+    if (nextShowAnalysis !== showAnalysis) {
+      setShowAnalysis(nextShowAnalysis);
+    }
+
+    const yearParam = searchParams.get('year');
+    if (layoutParam === 'timeline' && yearParam) {
+      const parsedYear = Number(yearParam);
+      if (!Number.isNaN(parsedYear) && parsedYear !== timelineYear) {
+        setTimelineYear(parsedYear);
+      }
+    }
+
+    if (layoutParam !== 'timeline' && timelineYear !== null) {
+      setTimelineYear(null);
+    }
+
+    lastSerializedParams.current = searchParams.toString();
+    isApplyingParams.current = false;
+  }, [searchParams, centerPaperId, layoutType, showCitations, showReferences, showSimilar, showCommunities, showAnalysis, timelineYear]);
+
+  useEffect(() => {
+    if (isApplyingParams.current) return;
+
+    const params = new URLSearchParams();
+    if (centerPaperId) {
+      params.set('paper', centerPaperId);
+    }
+    if (layoutType !== 'force') {
+      params.set('layout', layoutType);
+    }
+    if (!showCitations) {
+      params.set('citations', '0');
+    }
+    if (!showReferences) {
+      params.set('references', '0');
+    }
+    if (!showSimilar) {
+      params.set('similar', '0');
+    }
+    if (showCommunities) {
+      params.set('communities', '1');
+    }
+    if (showAnalysis) {
+      params.set('analysis', '1');
+    }
+    if (layoutType === 'timeline' && yearInfo && effectiveTimelineYear !== null && effectiveTimelineYear !== yearInfo.max) {
+      params.set('year', String(effectiveTimelineYear));
+    }
+
+    const serialized = params.toString();
+    if (serialized !== lastSerializedParams.current) {
+      lastSerializedParams.current = serialized;
+      const search = serialized ? `?${serialized}` : '?';
+      if (search !== `?${searchParams.toString()}`) {
+        router.replace(search, { scroll: false });
+      }
+    }
+  }, [centerPaperId, layoutType, showCitations, showReferences, showSimilar, showCommunities, showAnalysis, router, searchParams, yearInfo, effectiveTimelineYear]);
 
   const { data: networkData, isLoading } = useQuery<NetworkData>({
-    queryKey: ['network', centerPaperId],
+    queryKey: ['network', centerPaperId, showSimilar],
     queryFn: async () => {
       if (!centerPaperId) return { papers: [], edges: [] };
-      const response = await fetch(`/api/network/${centerPaperId}`);
+      const params = new URLSearchParams();
+      if (!showSimilar) {
+        params.set('includeSimilar', 'false');
+      }
+      const suffix = params.toString();
+      const response = await fetch(`/api/network/${centerPaperId}${suffix ? `?${suffix}` : ''}`);
       if (!response.ok) throw new Error('Failed to fetch network');
       return response.json();
     },
     enabled: !!centerPaperId,
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 10,
+    retry: 1,
   });
 
   // Filter edges based on selected types
-  const filteredNetworkData = useMemo(() => {
-    if (!networkData) return null;
+  const baseNetworkData = useMemo<NetworkData | null>(() => {
+    if (!networkData || !centerPaperId) return null;
 
     const filteredEdges = networkData.edges.filter(edge => {
       if (edge.type === 'citation' && !showCitations) return false;
@@ -65,15 +183,13 @@ function HomeContent() {
       return true;
     });
 
-    // Get paper IDs that are connected via filtered edges
     const connectedPaperIds = new Set<string>();
-    connectedPaperIds.add(centerPaperId!);
+    connectedPaperIds.add(centerPaperId);
     filteredEdges.forEach(edge => {
       connectedPaperIds.add(edge.source);
       connectedPaperIds.add(edge.target);
     });
 
-    // Filter papers to only include connected ones
     const filteredPapers = networkData.papers.filter(paper =>
       connectedPaperIds.has(paper.paperId)
     );
@@ -83,6 +199,144 @@ function HomeContent() {
       edges: filteredEdges
     };
   }, [networkData, showCitations, showReferences, showSimilar, centerPaperId]);
+
+  const yearInfo = useMemo(() => {
+    if (!baseNetworkData || baseNetworkData.papers.length === 0) {
+      return null;
+    }
+
+    const validYears = baseNetworkData.papers
+      .map(paper => paper.year)
+      .filter(year => Number.isFinite(year));
+
+    if (validYears.length === 0) {
+      return null;
+    }
+
+    const min = Math.min(...validYears);
+    const max = Math.max(...validYears);
+
+    return { min, max };
+  }, [baseNetworkData]);
+
+  useEffect(() => {
+    if (!yearInfo) {
+      if (timelineYear !== null) {
+        setTimelineYear(null);
+      }
+      if (isTimelinePlaying) {
+        setIsTimelinePlaying(false);
+      }
+      return;
+    }
+
+    if (timelineYear === null) {
+      setTimelineYear(yearInfo.max);
+      return;
+    }
+
+    if (timelineYear < yearInfo.min) {
+      setTimelineYear(yearInfo.min);
+    } else if (timelineYear > yearInfo.max) {
+      setTimelineYear(yearInfo.max);
+    }
+  }, [yearInfo, timelineYear, isTimelinePlaying]);
+
+  useEffect(() => {
+    if (layoutType !== 'timeline' && isTimelinePlaying) {
+      setIsTimelinePlaying(false);
+    }
+  }, [layoutType, isTimelinePlaying]);
+
+  useEffect(() => {
+    if (!isTimelinePlaying || layoutType !== 'timeline' || !yearInfo) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setTimelineYear(prev => {
+        const current = prev ?? yearInfo.min;
+        if (current >= yearInfo.max) {
+          setIsTimelinePlaying(false);
+          return yearInfo.max;
+        }
+        const next = Math.min(current + 1, yearInfo.max);
+        if (next >= yearInfo.max) {
+          setIsTimelinePlaying(false);
+        }
+        return next;
+      });
+    }, 1200);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isTimelinePlaying, layoutType, yearInfo]);
+
+  const effectiveTimelineYear = useMemo(() => {
+    if (layoutType !== 'timeline' || !yearInfo) {
+      return null;
+    }
+    const target = timelineYear ?? yearInfo.max;
+    return Math.min(Math.max(target, yearInfo.min), yearInfo.max);
+  }, [layoutType, timelineYear, yearInfo]);
+
+  const filteredNetworkData = useMemo<FilteredNetworkData | null>(() => {
+    if (!baseNetworkData) {
+      return null;
+    }
+
+    if (effectiveTimelineYear === null) {
+      return {
+        papers: baseNetworkData.papers,
+        edges: baseNetworkData.edges,
+        hiddenPaperCount: 0,
+        hiddenEdgeCount: 0,
+        effectiveTimelineYear: null,
+      };
+    }
+
+    const visiblePapers = baseNetworkData.papers.filter(paper => {
+      if (!Number.isFinite(paper.year)) return true;
+      return paper.year <= effectiveTimelineYear;
+    });
+
+    const visiblePaperIds = new Set(visiblePapers.map(paper => paper.paperId));
+    const visibleEdges = baseNetworkData.edges.filter(edge =>
+      visiblePaperIds.has(edge.source) && visiblePaperIds.has(edge.target)
+    );
+
+    return {
+      papers: visiblePapers,
+      edges: visibleEdges,
+      hiddenPaperCount: baseNetworkData.papers.length - visiblePapers.length,
+      hiddenEdgeCount: baseNetworkData.edges.length - visibleEdges.length,
+      effectiveTimelineYear,
+    };
+  }, [baseNetworkData, effectiveTimelineYear]);
+
+  const effectiveTimelineYearValue = filteredNetworkData?.effectiveTimelineYear ?? yearInfo?.max ?? null;
+  const hiddenPaperCount = filteredNetworkData?.hiddenPaperCount ?? 0;
+  const hiddenEdgeCount = filteredNetworkData?.hiddenEdgeCount ?? 0;
+
+  const handleTimelinePlayToggle = useCallback(() => {
+    if (!yearInfo) return;
+    if (!isTimelinePlaying) {
+      const current = filteredNetworkData?.effectiveTimelineYear ?? yearInfo.max;
+      if (current >= yearInfo.max) {
+        setTimelineYear(yearInfo.min);
+      }
+      setIsTimelinePlaying(true);
+    } else {
+      setIsTimelinePlaying(false);
+    }
+  }, [filteredNetworkData, isTimelinePlaying, yearInfo]);
+
+  const handleTimelineReset = useCallback(() => {
+    if (!yearInfo) return;
+    setIsTimelinePlaying(false);
+    setTimelineYear(yearInfo.max);
+  }, [yearInfo]);
 
   // Calculate network analysis
   const networkAnalysis = useMemo(() => {
@@ -100,6 +354,11 @@ function HomeContent() {
       filteredNetworkData.edges
     );
 
+    const betweenness = calculateBetweennessCentrality(
+      filteredNetworkData.papers,
+      filteredNetworkData.edges
+    );
+
     const communities = detectCommunities(
       filteredNetworkData.papers,
       filteredNetworkData.edges
@@ -111,11 +370,19 @@ function HomeContent() {
       5
     );
 
+    const topBetweenness = getTopPapers(
+      filteredNetworkData.papers,
+      betweenness,
+      5
+    );
+
     return {
       stats,
       centrality,
+      betweenness,
       communities,
-      topPapers
+      topPapers,
+      topBetweenness
     };
   }, [filteredNetworkData]);
 
@@ -123,12 +390,16 @@ function HomeContent() {
     setSelectedPaper(paper);
     setCenterPaperId(paper.paperId);
     setDetailPaper(paper);
-    // Update URL
-    router.push(`?paper=${paper.paperId}`, { scroll: false });
+    setHighlightPath(null);
+    setHighlightNodes(null);
+    setFocusPaperId(paper.paperId);
   };
 
   const handleNodeClick = (paper: Paper) => {
     setDetailPaper(paper);
+    setHighlightPath(null);
+    setHighlightNodes([paper.paperId]);
+    setFocusPaperId(paper.paperId);
   };
 
   const handleNodeDoubleClick = (paper: Paper) => {
@@ -136,17 +407,42 @@ function HomeContent() {
     setCenterPaperId(paper.paperId);
     setSelectedPaper(paper);
     setDetailPaper(paper);
-    // Update URL
-    router.push(`?paper=${paper.paperId}`, { scroll: false });
+    setHighlightPath(null);
+    setHighlightNodes(null);
+    setFocusPaperId(paper.paperId);
   };
 
   const handleShareUrl = () => {
-    if (!centerPaperId) return;
-    const url = `${window.location.origin}?paper=${centerPaperId}`;
+    const url = window.location.href;
     navigator.clipboard.writeText(url).then(() => {
       alert('URL이 클립보드에 복사되었습니다!');
     });
   };
+
+  const handleHighlightPath = useCallback((path: string[] | null) => {
+    setHighlightPath(path);
+    setHighlightNodes(path);
+    if (!path || path.length === 0) {
+      setFocusPaperId(null);
+    }
+  }, []);
+
+  const handleHighlightNodes = useCallback((nodes: string[] | null) => {
+    setHighlightNodes(nodes);
+    if (!nodes || nodes.length === 0) {
+      setFocusPaperId(null);
+    }
+  }, []);
+
+  const handleFocusPaper = useCallback((paperId: string | null) => {
+    setFocusPaperId(paperId);
+  }, []);
+
+  useEffect(() => {
+    setHighlightPath(null);
+    setHighlightNodes(null);
+    setFocusPaperId(centerPaperId);
+  }, [centerPaperId, showCitations, showReferences, showSimilar]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
@@ -197,6 +493,56 @@ function HomeContent() {
                   타임라인
                 </button>
               </div>
+
+              {layoutType === 'timeline' && yearInfo && effectiveTimelineYearValue !== null && (
+                <div className="flex flex-col gap-2 px-4 py-3 bg-white dark:bg-gray-800 rounded-lg shadow min-w-[260px]">
+                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>{yearInfo.min}</span>
+                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                      {effectiveTimelineYearValue}년까지 표시
+                    </span>
+                    <span>{yearInfo.max}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={yearInfo.min}
+                    max={yearInfo.max}
+                    step={1}
+                    value={effectiveTimelineYearValue}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (!Number.isNaN(value)) {
+                        setIsTimelinePlaying(false);
+                        setTimelineYear(value);
+                      }
+                    }}
+                    className="w-full accent-blue-600"
+                    aria-label="타임라인 연도 선택"
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
+                    <button
+                      onClick={handleTimelinePlayToggle}
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors"
+                      type="button"
+                    >
+                      {isTimelinePlaying ? '⏸️ 일시정지' : '▶️ 재생'}
+                    </button>
+                    <button
+                      onClick={handleTimelineReset}
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      type="button"
+                      disabled={effectiveTimelineYearValue === yearInfo.max && hiddenPaperCount === 0}
+                    >
+                      ↺ 전체 보기
+                    </button>
+                    {hiddenPaperCount > 0 && (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                        숨김 논문 {hiddenPaperCount}편 · 연결 {hiddenEdgeCount}개
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="w-px h-8 bg-gray-300 dark:bg-gray-600"></div>
               <label className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 rounded-lg shadow cursor-pointer hover:shadow-md transition-shadow">
@@ -281,6 +627,9 @@ function HomeContent() {
                   communities={networkAnalysis?.communities}
                   centralityScores={networkAnalysis?.centrality}
                   showCommunities={showCommunities}
+                  highlightPath={highlightPath ?? undefined}
+                  highlightNodes={highlightNodes ?? undefined}
+                  focusPaperId={focusPaperId ?? undefined}
                 />
               </div>
               <div className="lg:col-span-1 h-[600px]">
@@ -288,7 +637,32 @@ function HomeContent() {
                   <NetworkStats
                     stats={networkAnalysis.stats}
                     topPapers={networkAnalysis.topPapers}
-                    onClose={() => setShowAnalysis(false)}
+                    betweennessTop={networkAnalysis.topBetweenness}
+                    centrality={networkAnalysis.centrality}
+                    betweenness={networkAnalysis.betweenness}
+                    communities={networkAnalysis.communities}
+                    papers={filteredNetworkData.papers}
+                    edges={filteredNetworkData.edges}
+                    timelineBounds={yearInfo ?? null}
+                    timelineYear={filteredNetworkData.effectiveTimelineYear ?? null}
+                    hiddenPaperCount={hiddenPaperCount}
+                    hiddenEdgeCount={hiddenEdgeCount}
+                    onHighlightPath={handleHighlightPath}
+                    onHighlightNodes={handleHighlightNodes}
+                    onClose={() => {
+                      setShowAnalysis(false);
+                      setHighlightNodes(null);
+                      setHighlightPath(null);
+                      setFocusPaperId(centerPaperId);
+                    }}
+                    onFocusPaper={handleFocusPaper}
+                    onRequestPaperDetail={(paper) => {
+                      setDetailPaper(paper);
+                      setShowAnalysis(false);
+                      setHighlightNodes([paper.paperId]);
+                      setHighlightPath(null);
+                      setFocusPaperId(paper.paperId);
+                    }}
                   />
                 ) : (
                   <PaperDetail

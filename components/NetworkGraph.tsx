@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import cytoscape, { Core, NodeSingular, EdgeSingular } from 'cytoscape';
 import type { Paper, NetworkEdge } from '@/types/paper';
 import type { Community, CentralityScores } from '@/lib/networkAnalysis';
@@ -18,6 +18,9 @@ interface NetworkGraphProps {
   communities?: Community[];
   centralityScores?: CentralityScores;
   showCommunities?: boolean;
+  highlightPath?: string[];
+  highlightNodes?: string[];
+  focusPaperId?: string;
 }
 
 export interface NetworkGraphHandle {
@@ -25,20 +28,22 @@ export interface NetworkGraphHandle {
   exportJPG: () => void;
 }
 
-export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout = 'force', onExportImage, communities, centralityScores, showCommunities = false }: NetworkGraphProps) {
+export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout = 'force', onExportImage, communities, centralityScores, showCommunities = false, highlightPath, highlightNodes, focusPaperId }: NetworkGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
   // Create community lookup map
-  const communityMap = new Map<string, string>();
-  if (showCommunities && communities) {
-    communities.forEach(community => {
-      community.papers.forEach(paperId => {
-        communityMap.set(paperId, community.color);
+  const communityMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (showCommunities && communities) {
+      communities.forEach(community => {
+        community.papers.forEach(paperId => {
+          map.set(paperId, community.color);
+        });
       });
-    });
-  }
+    }
+    return map;
+  }, [communities, showCommunities]);
 
   const exportPNG = () => {
     if (!cyRef.current) return;
@@ -192,6 +197,16 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
           }
         },
         {
+          selector: 'node.path-highlight',
+          style: {
+            'border-color': '#f97316',
+            'border-width': 6,
+            'background-color': '#fb923c',
+            'z-index-compare': 'manual',
+            'z-index': 999
+          }
+        },
+        {
           selector: 'node:selected',
           style: {
             'border-color': '#ef4444',
@@ -224,6 +239,16 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
               return type === 'similar' ? 'dashed' : 'solid';
             },
             'line-dash-pattern': [6, 3]
+          }
+        },
+        {
+          selector: 'edge.path-highlight',
+          style: {
+            'width': 5,
+            'line-color': '#f97316',
+            'target-arrow-color': '#f97316',
+            'z-index-compare': 'manual',
+            'z-index': 999
           }
         },
         {
@@ -271,8 +296,6 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
     cy.on('tap', 'node', (evt) => {
       const node = evt.target;
       const paper = node.data('paper');
-      setSelectedNode(node.id());
-
       // Highlight connected edges
       cy.elements().removeClass('highlighted');
       node.connectedEdges().addClass('highlighted');
@@ -295,7 +318,6 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
     // Tap on background to deselect
     cy.on('tap', (evt) => {
       if (evt.target === cy) {
-        setSelectedNode(null);
         cy.elements().removeClass('highlighted');
       }
     });
@@ -306,7 +328,92 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
     return () => {
       cy.destroy();
     };
-  }, [papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout, communities, centralityScores, showCommunities]);
+  }, [papers, edges, centerPaperId, onNodeClick, onNodeDoubleClick, layout, communities, centralityScores, showCommunities, communityMap]);
+
+  useEffect(() => {
+    if (!cyRef.current) return;
+
+    cyRef.current.nodes().removeClass('path-highlight');
+    cyRef.current.edges().removeClass('path-highlight');
+
+    const nodesToHighlight = highlightNodes ?? highlightPath ?? [];
+    if (!nodesToHighlight || nodesToHighlight.length === 0) {
+      return;
+    }
+
+    const highlightSet = new Set(nodesToHighlight);
+
+    nodesToHighlight.forEach((nodeId) => {
+      const node = cyRef.current?.getElementById(nodeId);
+      if (node && node.length > 0) {
+        node.addClass('path-highlight');
+      }
+    });
+
+    if (highlightPath && highlightPath.length > 1) {
+      for (let i = 0; i < highlightPath.length - 1; i++) {
+        const source = highlightPath[i];
+        const target = highlightPath[i + 1];
+        const edgesBetween = cyRef.current
+          .edges()
+          .filter(edge => {
+            const edgeSource = edge.data('source');
+            const edgeTarget = edge.data('target');
+            return (
+              (edgeSource === source && edgeTarget === target) ||
+              (edgeSource === target && edgeTarget === source)
+            );
+          });
+
+        edgesBetween.forEach(edge => edge.addClass('path-highlight'));
+      }
+    } else {
+      cyRef.current.edges().forEach(edge => {
+        const edgeSource = edge.data('source');
+        const edgeTarget = edge.data('target');
+        if (highlightSet.has(edgeSource) && highlightSet.has(edgeTarget)) {
+          edge.addClass('path-highlight');
+        }
+      });
+    }
+
+    const highlightedCollections = nodesToHighlight
+      .map(id => cyRef.current!.getElementById(id))
+      .filter(ele => ele && ele.length > 0);
+
+    if (highlightedCollections.length > 0) {
+      const elements = cyRef.current.collection(highlightedCollections);
+      cyRef.current.animate({
+        fit: {
+          eles: elements,
+          padding: 80
+        },
+        duration: 400
+      });
+    }
+  }, [highlightPath, highlightNodes, edges]);
+
+  useEffect(() => {
+    if (!cyRef.current) return;
+
+    cyRef.current.nodes().unselect();
+
+    if (!focusPaperId) {
+      return;
+    }
+
+    const node = cyRef.current.getElementById(focusPaperId);
+    if (node && node.length > 0) {
+      node.select();
+      cyRef.current.animate({
+        fit: {
+          eles: node,
+          padding: 100
+        },
+        duration: 400
+      });
+    }
+  }, [focusPaperId]);
 
   // Calculate year labels for timeline
   const yearLabels = layout === 'timeline' ? (() => {
@@ -415,7 +522,7 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
           </div>
 
           <div className="text-gray-600 dark:text-gray-400 mt-2 ml-2">
-            노드 크기 = 인용 수
+            노드 크기 = 중심성 (없으면 인용 수)
           </div>
         </div>
       </div>
