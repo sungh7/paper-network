@@ -8,6 +8,8 @@ import { NetworkGraph, type LayoutType } from '@/components/NetworkGraph';
 import { PaperDetail } from '@/components/PaperDetail';
 import { NetworkStats } from '@/components/NetworkStats';
 import { KeywordAnalysis } from '@/components/KeywordAnalysis';
+import { Bookmarks } from '@/components/Bookmarks';
+import { PaperComparison } from '@/components/PaperComparison';
 import type { Paper, NetworkEdge } from '@/types/paper';
 import {
   calculateNetworkStats,
@@ -43,6 +45,9 @@ function HomeContent() {
   const [layoutType, setLayoutType] = useState<LayoutType>('force');
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [showKeywordAnalysis, setShowKeywordAnalysis] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  const [comparisonPapers, setComparisonPapers] = useState<Paper[]>([]);
   const [showCommunities, setShowCommunities] = useState(false);
   const [highlightPath, setHighlightPath] = useState<string[] | null>(null);
   const [highlightNodes, setHighlightNodes] = useState<string[] | null>(null);
@@ -616,11 +621,39 @@ function HomeContent() {
                 onClick={() => {
                   setShowKeywordAnalysis(!showKeywordAnalysis);
                   setShowAnalysis(false);
+                  setShowBookmarks(false);
+                  setShowComparison(false);
                 }}
                 className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow hover:shadow-md transition-all font-medium"
                 title="키워드 분석"
               >
                 🔤 키워드
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowBookmarks(!showBookmarks);
+                  setShowAnalysis(false);
+                  setShowKeywordAnalysis(false);
+                  setShowComparison(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow hover:shadow-md transition-all font-medium"
+                title="북마크"
+              >
+                ⭐ 북마크
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowComparison(!showComparison);
+                  setShowAnalysis(false);
+                  setShowKeywordAnalysis(false);
+                  setShowBookmarks(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-lg shadow hover:shadow-md transition-all font-medium"
+                title="논문 비교"
+              >
+                📊 비교 {comparisonPapers.length > 0 && `(${comparisonPapers.length})`}
               </button>
 
               <button
@@ -685,6 +718,27 @@ function HomeContent() {
                   <KeywordAnalysis
                     papers={filteredNetworkData.papers}
                     onClose={() => setShowKeywordAnalysis(false)}
+                  />
+                ) : showBookmarks ? (
+                  <Bookmarks
+                    currentPaper={detailPaper}
+                    onClose={() => setShowBookmarks(false)}
+                    onPaperSelect={(paper) => {
+                      setDetailPaper(paper);
+                      setShowBookmarks(false);
+                    }}
+                  />
+                ) : showComparison ? (
+                  <PaperComparison
+                    papers={comparisonPapers}
+                    onClose={() => setShowComparison(false)}
+                    onRemovePaper={(paperId) => {
+                      setComparisonPapers(comparisonPapers.filter(p => p.paperId !== paperId));
+                    }}
+                    onPaperSelect={(paper) => {
+                      setDetailPaper(paper);
+                      setShowComparison(false);
+                    }}
                   />
                 ) : (
                   <PaperDetail
