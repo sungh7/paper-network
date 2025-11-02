@@ -365,7 +365,9 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
             );
           });
 
-        edgesBetween.forEach(edge => edge.addClass('path-highlight'));
+        edgesBetween.forEach(edge => {
+          edge.addClass('path-highlight');
+        });
       }
     } else {
       cyRef.current.edges().forEach(edge => {
@@ -382,7 +384,10 @@ export function NetworkGraph({ papers, edges, centerPaperId, onNodeClick, onNode
       .filter(ele => ele && ele.length > 0);
 
     if (highlightedCollections.length > 0) {
-      const elements = cyRef.current.collection(highlightedCollections);
+      let elements = cyRef.current.collection();
+      highlightedCollections.forEach(ele => {
+        elements = elements.union(ele);
+      });
       cyRef.current.animate({
         fit: {
           eles: elements,

@@ -114,45 +114,6 @@ function HomeContent() {
     isApplyingParams.current = false;
   }, [searchParams, centerPaperId, layoutType, showCitations, showReferences, showSimilar, showCommunities, showAnalysis, timelineYear]);
 
-  useEffect(() => {
-    if (isApplyingParams.current) return;
-
-    const params = new URLSearchParams();
-    if (centerPaperId) {
-      params.set('paper', centerPaperId);
-    }
-    if (layoutType !== 'force') {
-      params.set('layout', layoutType);
-    }
-    if (!showCitations) {
-      params.set('citations', '0');
-    }
-    if (!showReferences) {
-      params.set('references', '0');
-    }
-    if (!showSimilar) {
-      params.set('similar', '0');
-    }
-    if (showCommunities) {
-      params.set('communities', '1');
-    }
-    if (showAnalysis) {
-      params.set('analysis', '1');
-    }
-    if (layoutType === 'timeline' && yearInfo && effectiveTimelineYear !== null && effectiveTimelineYear !== yearInfo.max) {
-      params.set('year', String(effectiveTimelineYear));
-    }
-
-    const serialized = params.toString();
-    if (serialized !== lastSerializedParams.current) {
-      lastSerializedParams.current = serialized;
-      const search = serialized ? `?${serialized}` : '?';
-      if (search !== `?${searchParams.toString()}`) {
-        router.replace(search, { scroll: false });
-      }
-    }
-  }, [centerPaperId, layoutType, showCitations, showReferences, showSimilar, showCommunities, showAnalysis, router, searchParams, yearInfo, effectiveTimelineYear]);
-
   const { data: networkData, isLoading } = useQuery<NetworkData>({
     queryKey: ['network', centerPaperId, showSimilar],
     queryFn: async () => {
@@ -318,6 +279,46 @@ function HomeContent() {
   const effectiveTimelineYearValue = filteredNetworkData?.effectiveTimelineYear ?? yearInfo?.max ?? null;
   const hiddenPaperCount = filteredNetworkData?.hiddenPaperCount ?? 0;
   const hiddenEdgeCount = filteredNetworkData?.hiddenEdgeCount ?? 0;
+
+  // Sync state to URL
+  useEffect(() => {
+    if (isApplyingParams.current) return;
+
+    const params = new URLSearchParams();
+    if (centerPaperId) {
+      params.set('paper', centerPaperId);
+    }
+    if (layoutType !== 'force') {
+      params.set('layout', layoutType);
+    }
+    if (!showCitations) {
+      params.set('citations', '0');
+    }
+    if (!showReferences) {
+      params.set('references', '0');
+    }
+    if (!showSimilar) {
+      params.set('similar', '0');
+    }
+    if (showCommunities) {
+      params.set('communities', '1');
+    }
+    if (showAnalysis) {
+      params.set('analysis', '1');
+    }
+    if (layoutType === 'timeline' && yearInfo && effectiveTimelineYearValue !== null && effectiveTimelineYearValue !== yearInfo.max) {
+      params.set('year', String(effectiveTimelineYearValue));
+    }
+
+    const serialized = params.toString();
+    if (serialized !== lastSerializedParams.current) {
+      lastSerializedParams.current = serialized;
+      const search = serialized ? `?${serialized}` : '?';
+      if (search !== `?${searchParams.toString()}`) {
+        router.replace(search, { scroll: false });
+      }
+    }
+  }, [centerPaperId, layoutType, showCitations, showReferences, showSimilar, showCommunities, showAnalysis, router, searchParams, yearInfo, effectiveTimelineYearValue]);
 
   const handleTimelinePlayToggle = useCallback(() => {
     if (!yearInfo) return;

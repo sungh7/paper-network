@@ -68,7 +68,8 @@ export async function GET(
       if (citation.paperId) {
         papers.set(citation.paperId, {
           ...citation,
-          abstract: undefined // Reduce payload size
+          abstract: undefined, // Reduce payload size
+          referenceCount: 0 // Not available from API
         });
         edges.push({
           source: citation.paperId,
@@ -83,7 +84,8 @@ export async function GET(
       if (reference.paperId) {
         papers.set(reference.paperId, {
           ...reference,
-          abstract: undefined // Reduce payload size
+          abstract: undefined, // Reduce payload size
+          referenceCount: 0 // Not available from API
         });
         edges.push({
           source: mainPaper.paperId,
@@ -99,7 +101,8 @@ export async function GET(
         if (similar.paperId && !papers.has(similar.paperId)) {
           papers.set(similar.paperId, {
             ...similar,
-            abstract: undefined // Reduce payload size
+            abstract: undefined, // Reduce payload size
+            referenceCount: 0 // Not available from API
           });
           edges.push({
             source: mainPaper.paperId,
