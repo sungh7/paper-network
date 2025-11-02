@@ -7,6 +7,7 @@ import { SearchBar } from '@/components/SearchBar';
 import { NetworkGraph, type LayoutType } from '@/components/NetworkGraph';
 import { PaperDetail } from '@/components/PaperDetail';
 import { NetworkStats } from '@/components/NetworkStats';
+import { KeywordAnalysis } from '@/components/KeywordAnalysis';
 import type { Paper, NetworkEdge } from '@/types/paper';
 import {
   calculateNetworkStats,
@@ -41,6 +42,7 @@ function HomeContent() {
   const [showSimilar, setShowSimilar] = useState(true);
   const [layoutType, setLayoutType] = useState<LayoutType>('force');
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const [showKeywordAnalysis, setShowKeywordAnalysis] = useState(false);
   const [showCommunities, setShowCommunities] = useState(false);
   const [highlightPath, setHighlightPath] = useState<string[] | null>(null);
   const [highlightNodes, setHighlightNodes] = useState<string[] | null>(null);
@@ -600,11 +602,25 @@ function HomeContent() {
               </label>
 
               <button
-                onClick={() => setShowAnalysis(!showAnalysis)}
+                onClick={() => {
+                  setShowAnalysis(!showAnalysis);
+                  setShowKeywordAnalysis(false);
+                }}
                 className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg shadow hover:shadow-md transition-all font-medium"
                 title="네트워크 분석"
               >
                 📊 분석
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowKeywordAnalysis(!showKeywordAnalysis);
+                  setShowAnalysis(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow hover:shadow-md transition-all font-medium"
+                title="키워드 분석"
+              >
+                🔤 키워드
               </button>
 
               <button
@@ -664,6 +680,11 @@ function HomeContent() {
                       setHighlightPath(null);
                       setFocusPaperId(paper.paperId);
                     }}
+                  />
+                ) : showKeywordAnalysis ? (
+                  <KeywordAnalysis
+                    papers={filteredNetworkData.papers}
+                    onClose={() => setShowKeywordAnalysis(false)}
                   />
                 ) : (
                   <PaperDetail
